@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 import pydeck as pdk
+import math
 from datetime import datetime, timedelta
 
 # 1. Page Config
@@ -23,11 +24,10 @@ if 'limit' not in st.session_state:
     st.session_state.limit = 2000
 
 # 3. Date & API Setup
-# Window: 5 months (approx 150 days)
 five_months_ago = (datetime.now() - timedelta(days=150)).strftime('%Y-%m-%dT%H:%M:%S')
 base_url = "https://data.sfgov.org/resource/vw6y-z8j6.json"
 
-# TARGET COORDINATES (Updated Center Point)
+# TARGET COORDINATES
 target_lat = 37.77947681979851
 target_lon = -122.40646722115551
 radius_meters = 48.8  # ~160 feet
@@ -47,12 +47,22 @@ st.markdown("Download the **Solve SF** app to submit reports: [iOS](https://apps
 st.markdown("---")
 
 # 4. Query
-# Excludes 'Tree Maintenance' tickets
 params = {
     "$where": f"within_circle(point, {target_lat}, {target_lon}, {radius_meters}) AND requested_datetime > '{five_months_ago}' AND media_url IS NOT NULL AND service_name != 'Tree Maintenance'",
     "$order": "requested_datetime DESC",
     "$limit": st.session_state.limit
 }
+
+# --- NEW: DISTANCE CALCULATION HELPER ---
+def calculate_distance(lat1, lon1, lat2, lon2):
+    # Haversine formula for strict distance calculation
+    R = 6371000  # Radius of Earth in meters
+    phi1, phi2 = math.radians(lat1), math.radians(lat2) 
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
+    c = 2*math.atan2(math.sqrt(a), math.sqrt(1-a))
+    return R*c
 
 # 5. Fetch Data
 @st.cache_data(ttl=300)
@@ -62,11 +72,20 @@ def get_data(query_limit):
         if r.status_code == 200:
             df_data = pd.DataFrame(r.json())
             
-            # Extract Lat/Lon for mapping if data exists
+            # Clean and Extract Lat/Lon
             if not df_data.empty and 'point' in df_data.columns:
                 if 'lat' in df_data.columns and 'long' in df_data.columns:
                     df_data['lat'] = pd.to_numeric(df_data['lat'])
                     df_data['lon'] = pd.to_numeric(df_data['long'])
+                    
+                    # --- STRICT PYTHON FILTER ---
+                    # Calculate exact distance for every point and filter out any that exceed radius
+                    # This ensures the map visualization is 100% accurate to the circle.
+                    df_data['dist_m'] = df_data.apply(
+                        lambda x: calculate_distance(target_lat, target_lon, x['lat'], x['lon']), axis=1
+                    )
+                    df_data = df_data[df_data['dist_m'] <= radius_meters]
+                    
             return df_data
         else:
             return pd.DataFrame()
@@ -101,7 +120,7 @@ with st.expander("🗺️ View Map & Incident Distribution", expanded=False):
             df,
             get_position='[lon, lat]',
             get_color=[0, 128, 255, 200],
-            get_radius=3,
+            get_radius=3, 
             pickable=True,
         )
 
@@ -113,7 +132,6 @@ with st.expander("🗺️ View Map & Incident Distribution", expanded=False):
             pitch=0,
         )
 
-        # Render Map with CARTO Style (No API Key needed)
         st.pydeck_chart(pdk.Deck(
             map_style=pdk.map_styles.CARTO_LIGHT,
             initial_view_state=view_state,
@@ -132,11 +150,8 @@ def get_image_info(media_item):
     if not url: return None, False
     clean_url = url.split('?')[0].lower()
     
-    # Case A: Standard Image (Public Cloud)
     if clean_url.endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp')):
         return url, True 
-        
-    # Case B: Portal Link (HTML wrapper)
     return url, False 
 
 # 7. Display Feed
@@ -167,13 +182,11 @@ if not df.empty:
                         </div>
                         """, unsafe_allow_html=True)
                     
-                    # Metadata
                     if 'requested_datetime' in row:
                         date_str = pd.to_datetime(row['requested_datetime']).strftime('%b %d, %I:%M %p')
                     else:
                         date_str = "?"
                     
-                    # Subtype for title (Cleaned up)
                     raw_subtype = row.get('service_subtype', 'Unknown Issue')
                     display_title = raw_subtype.replace('_', ' ').title()
                     
