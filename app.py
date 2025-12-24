@@ -5,7 +5,7 @@ import pydeck as pdk
 from datetime import datetime, timedelta
 
 # 1. Page Config
-st.set_page_config(page_title="The Knox SRO Watch", page_icon="📍", layout="wide")
+st.set_page_config(page_title="Knox SRO Safety Monitor", page_icon="🚨", layout="wide")
 
 # --- NO CRAWL & STYLING ---
 st.markdown("""
@@ -23,29 +23,33 @@ if 'limit' not in st.session_state:
     st.session_state.limit = 800
 
 # 3. Date & API Setup
-ninety_days_ago = (datetime.now() - timedelta(days=90)).strftime('%Y-%m-%dT%H:%M:%S')
+# UPDATE: Extended window to 5 months (approx 150 days)
+five_months_ago = (datetime.now() - timedelta(days=150)).strftime('%Y-%m-%dT%H:%M:%S')
 base_url = "https://data.sfgov.org/resource/vw6y-z8j6.json"
 
-# TARGET COORDINATES (6th & Tehama / Knox SRO)
-target_lat = 37.77935708464253
-target_lon = -122.4064893420712
+# TARGET COORDINATES (Knox SRO Center Point)
+target_lat = 37.779421866793456
+target_lon = -122.4064255044886
 radius_meters = 48.8  # ~160 feet
 
-# Header & Advocacy Text
-st.header("The Knox SRO: Neighborhood Impact")
+# Header & Executive Briefing
+st.header("Knox SRO: Public Safety Impact Report")
 
 st.markdown(f"""
-The Knox SRO at 241 6th Street, operated by TODCO, through permissive management and a lack of security have invited open air drug markets, violence, open drug use, and disorderly neighbors to a residential neighborhood.
+**Location:** 241 6th Street (The Knox SRO) | **Operator:** TODCO
 
-This website displays 311 tickets filed within **160 feet** of the Knox SRO, to demonstrate the general chaos, open-air drug use and dealing, unsafe and inhumane conditions that continue to persist within **160 feet** of its entrance. Cases are updated daily when 311 data refreshes.
+This dashboard monitors the immediate vicinity of the Knox SRO, identifying it as a persistent focal point for street-level disorder. Data suggests that current management practices and security measures are insufficient, contributing to an environment of open-air drug activity, violence, and unsafe conditions for local residents.
+
+The feed below aggregates real-time 311 service requests filed within **160 feet** of the building's entrance, providing a documented timeline of the public safety challenges at this specific location.
 """)
 
 st.markdown("Download the **Solve SF** app to submit reports: [iOS](https://apps.apple.com/us/app/solve-sf/id6737751237) | [Android](https://play.google.com/store/apps/details?id=com.woahfinally.solvesf)")
 st.markdown("---")
 
 # 4. Query
+# This filters at the API level (Server Side) before data is returned.
 params = {
-    "$where": f"within_circle(point, {target_lat}, {target_lon}, {radius_meters}) AND requested_datetime > '{ninety_days_ago}' AND media_url IS NOT NULL",
+    "$where": f"within_circle(point, {target_lat}, {target_lon}, {radius_meters}) AND requested_datetime > '{five_months_ago}' AND media_url IS NOT NULL",
     "$order": "requested_datetime DESC",
     "$limit": st.session_state.limit
 }
@@ -71,8 +75,8 @@ def get_data(query_limit):
 
 df = get_data(st.session_state.limit)
 
-# --- MAP SECTION (FIXED INDENTATION) ---
-with st.expander("🗺️ View Map & Radius", expanded=False):
+# --- MAP SECTION ---
+with st.expander("🗺️ View Map & Incident Distribution", expanded=False):
     if not df.empty and 'lat' in df.columns:
         # Layer 1: The Target Radius (Red Circle)
         target_data = pd.DataFrame({'lat': [target_lat], 'lon': [target_lon]})
@@ -176,7 +180,7 @@ if not df.empty:
             st.rerun()
 
 else:
-    st.info(f"No records found within 160ft of the Knox SRO in the last 90 days.")
+    st.info(f"No records found within 160ft of target in the last 5 months.")
 
 # Footer
 st.markdown("---")
