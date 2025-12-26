@@ -194,7 +194,7 @@ with st.expander("🗺️ View Map & Incident Clusters", expanded=True):
     view_state = pdk.ViewState(
         latitude=avg_lat,
         longitude=avg_lon,
-        zoom=17.1, 
+        zoom=16.65, # UPDATED ZOOM
         pitch=0,
     )
 
@@ -207,7 +207,7 @@ with st.expander("🗺️ View Map & Incident Clusters", expanded=True):
 
 st.markdown("---")
 
-# 7. Helper: VERINT IMAGE CRACKER (Diagnostics Mode)
+# 7. Helper: VERINT IMAGE CRACKER (Debugging Mode)
 def fetch_verint_image(wrapper_url, case_id, debug_mode=False):
     logs = [] 
     try:
@@ -272,7 +272,7 @@ def fetch_verint_image(wrapper_url, case_id, debug_mode=False):
             filename_str = files_data['data']['formdata_filenames']
             
         if not filename_str:
-            if debug_mode: logs.append("Step 3 Failed: No filenames")
+            if debug_mode: logs.append(f"Step 3 Failed: No filenames in JSON. Response: {str(files_data)[:100]}")
             return None, logs
             
         raw_files = filename_str.split(';')
@@ -307,20 +307,8 @@ def fetch_verint_image(wrapper_url, case_id, debug_mode=False):
         )
         
         if r_image.status_code == 200:
-            # CHECK CONTENT TYPE
-            content_type = r_image.headers.get('Content-Type', '')
             content = r_image.content
-            
-            if debug_mode: logs.append(f"Step 5 OK. Size: {len(content)} bytes. Type: {content_type}")
-            
-            # If we got text/html/json back instead of bytes, that's the error
-            if len(content) < 1000: # Suspiciously small
-                try:
-                    text_content = content.decode('utf-8')
-                    if debug_mode: logs.append(f"Server Response Body: {text_content}")
-                except:
-                    pass
-
+            if debug_mode: logs.append(f"Step 5 OK. Size: {len(content)} bytes.")
             return content, logs
         else:
              if debug_mode: logs.append(f"Step 5 Failed: {r_image.status_code}")
@@ -359,26 +347,29 @@ if not df.empty:
         if 'duplicate' in notes:
             continue
 
-        is_first_item = (display_count == 0)
+        # Force Debug ON for the first 3 valid items to catch issues
+        show_debug = (display_count < 3)
         
         case_id = row.get('service_request_id', '')
-        media_content, media_type, logs = get_image_content(row.get('media_url'), case_id, debug_flag=is_first_item)
+        media_content, media_type, logs = get_image_content(row.get('media_url'), case_id, debug_flag=show_debug)
         
         if media_content:
             col_index = display_count % 4
             with cols[col_index]:
                 with st.container(border=True):
                     
+                    # DEBUG LOGS (Printed ABOVE image to ensure visibility)
+                    if show_debug and logs:
+                         # Using code block for readability
+                         st.code("\n".join(logs), language="text")
+
+                    # RENDER IMAGE
                     if media_type == "url" or media_type == "bytes":
                         st.image(media_content, width="stretch")
-                        # DEBUG: If bytes loaded but it looks like a text response
-                        if is_first_item and media_type == "bytes" and logs:
-                             st.info(f"DEBUG SUCCESS: {logs}")
                     else:
                         st.image(media_content, width="stretch")
-                        if is_first_item and logs:
-                            st.error(f"DEBUG ERROR: {logs}")
-                    
+
+                    # Metadata
                     if 'requested_datetime' in row:
                         date_str = pd.to_datetime(row['requested_datetime']).strftime('%b %d, %I:%M %p')
                     else:
