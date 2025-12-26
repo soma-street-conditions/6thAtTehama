@@ -80,8 +80,9 @@ location_clauses = [
 ]
 location_filter = f"({' OR '.join(location_clauses)})"
 
+# UPDATE: Added 'AND service_subtype != 'garbage_and_debris'' to the filter
 params = {
-    "$where": f"{location_filter} AND requested_datetime > '{five_months_ago}' AND media_url IS NOT NULL AND service_name != 'Tree Maintenance'",
+    "$where": f"{location_filter} AND requested_datetime > '{five_months_ago}' AND media_url IS NOT NULL AND service_name != 'Tree Maintenance' AND service_subtype != 'garbage_and_debris'",
     "$order": "requested_datetime DESC",
     "$limit": st.session_state.limit
 }
