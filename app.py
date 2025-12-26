@@ -39,7 +39,7 @@ sites = [
 ]
 
 # 4. Header
-st.title("SOMA Public Safety Monitor v6")
+st.title("SOMA Public Safety Monitor")
 st.markdown("""
 **Subject Properties Managed By:** TODCO Group
 This independent dashboard monitors the immediate vicinity of three key properties in SOMA.
@@ -140,7 +140,7 @@ with st.expander("🗺️ View Map & Incident Clusters", expanded=True):
 
 st.markdown("---")
 
-# 7. Helper: VERINT IMAGE CRACKER (FRESH KEY FIX)
+# 7. Helper: VERINT IMAGE CRACKER (PAYLOAD FUZZER)
 def fetch_verint_image(wrapper_url, debug_mode=False):
     logs = [] 
     try:
@@ -150,18 +150,15 @@ def fetch_verint_image(wrapper_url, debug_mode=False):
             "Referer": "https://mobile311.sfgov.org/",
         }
 
-        # A. EXTRACT CASE ID FROM URL (Trust this over dataframe)
+        # A. EXTRACT CASE ID
         parsed = urlparse(wrapper_url)
         qs = parse_qs(parsed.query)
         url_case_id = qs.get('caseid', [None])[0]
-        
         if not url_case_id:
              if debug_mode: logs.append("❌ Step 0 Failed: No caseid in URL")
              return None, logs
 
-        if debug_mode: logs.append(f"ℹ️ Synced Case ID: {url_case_id}")
-
-        # STEP 1: VISIT PAGE (Start Session & Get HTML)
+        # STEP 1: VISIT PAGE
         r_page = session.get(wrapper_url, headers=headers, timeout=5)
         if r_page.status_code != 200:
             if debug_mode: logs.append(f"❌ Step 1 Failed: {r_page.status_code}")
@@ -171,25 +168,19 @@ def fetch_verint_image(wrapper_url, debug_mode=False):
         html = r_page.text
         if debug_mode: logs.append("✅ Step 1 OK")
 
-        # STEP 2: EXTRACT FRESH SECRETS FROM HTML
-        # CRITICAL FIX: IGNORE URL FORMREF. FIND THE ONE IN THE SCRIPT.
-        
-        # Look for "formref":"XYZ" inside the script tags
+        # STEP 2: EXTRACT FRESH SECRETS
         formref_match = re.search(r'"formref"\s*:\s*"([^"]+)"', html)
         if not formref_match:
-            if debug_mode: logs.append("❌ Step 2 Failed: No FRESH formref found in HTML")
+            if debug_mode: logs.append("❌ Step 2 Failed: No formref found in HTML")
             return None, logs
         formref = formref_match.group(1)
         
-        if debug_mode: logs.append(f"✅ Step 2: Found FRESH formref: {formref}")
-
         csrf_match = re.search(r'name="_csrf_token"\s+content="([^"]+)"', html)
         csrf_token = csrf_match.group(1) if csrf_match else None
         
-        if debug_mode: logs.append(f"✅ Step 2 Secrets: CSRF Found: {bool(csrf_token)}")
+        if debug_mode: logs.append(f"✅ Step 2 OK (CSRF: {bool(csrf_token)})")
 
         # STEP 2.5: HANDSHAKE
-        auth_token = None
         try:
             citizen_url = "https://sanfrancisco.form.us.empro.verintcloudservices.com/api/citizen?archived=Y&preview=false&locale=en"
             headers["Referer"] = final_referer
@@ -206,37 +197,65 @@ def fetch_verint_image(wrapper_url, debug_mode=False):
         except Exception as e:
             if debug_mode: logs.append(f"⚠️ Step 2.5 Failed: {str(e)}")
 
-        # STEP 3: GET FILES
+        # STEP 3: PAYLOAD FUZZER
         api_base = "https://sanfrancisco.form.us.empro.verintcloudservices.com/api/custom"
         headers["Content-Type"] = "application/json"
         
-        details_payload = {
-            "caseid": str(url_case_id), # SYNCED ID
-            "data": {"formref": formref}, # FRESH KEY
+        # 1. Standard (What we've been using)
+        p1 = {
+            "caseid": str(url_case_id),
+            "data": {"formref": formref},
             "name": "download_attachments",
             "email": "", "xref": "", "xref1": "", "xref2": ""
         }
+        
+        # 2. Nested CaseID
+        p2 = {
+            "data": {"caseid": str(url_case_id), "formref": formref},
+            "name": "download_attachments",
+            "email": "", "xref": "", "xref1": "", "xref2": ""
+        }
+        
+        # 3. Explicit FormData Key (Matches Turn 14 Response)
+        p3 = {
+             "caseid": str(url_case_id),
+             "data": {"formref": formref, "formdata_caseid": str(url_case_id)},
+             "name": "download_attachments",
+             "email": "", "xref": "", "xref1": "", "xref2": ""
+        }
 
-        r_list = session.post(
-            f"{api_base}?action=get_attachments_details&actionedby=&loadform=true&access=citizen&locale=en",
-            json=details_payload, headers=headers, timeout=5
-        )
-        
-        if r_list.status_code != 200:
-            if debug_mode: logs.append(f"❌ Step 3 Failed: {r_list.status_code}")
-            return None, logs
-        
-        files_data = r_list.json()
-        filename_str = ""
-        if 'data' in files_data and 'formdata_filenames' in files_data['data']:
-            filename_str = files_data['data']['formdata_filenames']
+        payloads = [("Standard", p1), ("Nested", p2), ("FormData", p3)]
+        success_payload = None
+        raw_files = []
+
+        for name, payload in payloads:
+            r_list = session.post(
+                f"{api_base}?action=get_attachments_details&actionedby=&loadform=true&access=citizen&locale=en",
+                json=payload, headers=headers, timeout=5
+            )
             
-        if not filename_str:
-            if debug_mode: logs.append(f"❌ Step 3 Failed: No filenames. JSON: {str(files_data)[:200]}")
+            if r_list.status_code == 200:
+                files_data = r_list.json()
+                
+                # Check for explicit success or filenames
+                filename_str = ""
+                if 'data' in files_data and 'formdata_filenames' in files_data['data']:
+                    filename_str = files_data['data']['formdata_filenames']
+                
+                # If we got a string, we win
+                if filename_str:
+                    raw_files = filename_str.split(';')
+                    success_payload = payload # Save for next step
+                    if debug_mode: logs.append(f"✅ Step 3 Payload '{name}' SUCCEEDED!")
+                    break
+                else:
+                    if debug_mode: logs.append(f"⚠️ Step 3 Payload '{name}' Failed (casematch: no)")
+            else:
+                 if debug_mode: logs.append(f"⚠️ Step 3 Payload '{name}' HTTP Error {r_list.status_code}")
+
+        if not success_payload:
+            if debug_mode: logs.append("❌ Step 3 Failed: All payloads rejected.")
             return None, logs
-            
-        raw_files = filename_str.split(';')
-        if debug_mode: logs.append(f"✅ Step 3 OK: {len(raw_files)} files")
 
         # STEP 4: FILTER
         target_filename = None
@@ -251,14 +270,11 @@ def fetch_verint_image(wrapper_url, debug_mode=False):
              if debug_mode: logs.append("❌ Step 4 Failed: No valid image")
              return None, logs
 
-        # STEP 5: DOWNLOAD
-        download_payload = {
-            "caseid": str(url_case_id),
-            "data": {"formref": formref, "filename": target_filename},
-            "name": "download_attachments",
-            "email": "", "xref": "", "xref1": "", "xref2": ""
-        }
-
+        # STEP 5: DOWNLOAD (Use successful structure)
+        # We need to inject the filename into the successful payload structure
+        download_payload = success_payload.copy()
+        download_payload["data"]["filename"] = target_filename
+        
         r_image = session.post(
             f"{api_base}?action=download_attachment&actionedby=&loadform=true&access=citizen&locale=en",
             json=download_payload, headers=headers, timeout=5
