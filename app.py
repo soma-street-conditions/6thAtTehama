@@ -49,7 +49,6 @@ sites = [
         "name": "Hotel Isabel",
         "short_name": "Isabel",
         "address": "1095 Mission Street",
-        # UPDATED COORDINATES
         "lat": 37.779230374811554,
         "lon": -122.4107826194545
     }
@@ -193,10 +192,11 @@ with st.expander("🗺️ View Map & Incident Clusters", expanded=True):
     else:
         layers = [layer_circles]
 
+    # UPDATE: Increased zoom from 16.3 to 17.1
     view_state = pdk.ViewState(
         latitude=avg_lat,
         longitude=avg_lon,
-        zoom=16.3, 
+        zoom=17.1, 
         pitch=0,
     )
 
