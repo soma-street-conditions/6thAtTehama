@@ -38,7 +38,7 @@ sites = [
 ]
 
 # 4. Header
-st.title("SOMA Public Safety Monitor v3")
+st.title("SOMA Public Safety Monitor v4")
 st.markdown("""
 **Subject Properties Managed By:** TODCO Group
 This independent dashboard monitors the immediate vicinity of three key properties in SOMA.
@@ -139,7 +139,7 @@ with st.expander("🗺️ View Map & Incident Clusters", expanded=True):
 
 st.markdown("---")
 
-# 7. Helper: VERINT IMAGE CRACKER (With Handshake)
+# 7. Helper: VERINT IMAGE CRACKER (Deep Diagnostic)
 def fetch_verint_image(wrapper_url, case_id, debug_mode=False):
     logs = [] 
     try:
@@ -149,7 +149,7 @@ def fetch_verint_image(wrapper_url, case_id, debug_mode=False):
             "Referer": "https://mobile311.sfgov.org/",
         }
 
-        # STEP 1: LOAD PAGE
+        # STEP 1: VISIT WRAPPER PAGE
         r_page = session.get(wrapper_url, headers=headers, timeout=5)
         if r_page.status_code != 200:
             if debug_mode: logs.append(f"❌ Step 1 Failed: {r_page.status_code}")
@@ -159,10 +159,10 @@ def fetch_verint_image(wrapper_url, case_id, debug_mode=False):
         html = r_page.text
         if debug_mode: logs.append("✅ Step 1 OK")
 
-        # STEP 2: EXTRACT SECRETS
+        # STEP 2: EXTRACT TOKENS
         formref_match = re.search(r'"formref"\s*:\s*"([^"]+)"', html)
         if not formref_match:
-            if debug_mode: logs.append("❌ Step 2 Failed: No formref")
+            if debug_mode: logs.append("❌ Step 2 Failed: No formref found in HTML")
             return None, logs
         formref = formref_match.group(1)
         
@@ -171,8 +171,7 @@ def fetch_verint_image(wrapper_url, case_id, debug_mode=False):
         
         if debug_mode: logs.append(f"✅ Step 2 OK (CSRF: {bool(csrf_token)})")
 
-        # STEP 2.5: CITIZEN HANDSHAKE (Gets Authorization Token)
-        auth_token = None
+        # STEP 2.5: HANDSHAKE
         try:
             citizen_url = "https://sanfrancisco.form.us.empro.verintcloudservices.com/api/citizen?archived=Y&preview=false&locale=en"
             headers["Referer"] = final_referer
@@ -180,22 +179,18 @@ def fetch_verint_image(wrapper_url, case_id, debug_mode=False):
             if csrf_token: headers["X-CSRF-TOKEN"] = csrf_token
             
             r_handshake = session.get(citizen_url, headers=headers, timeout=5)
-            
-            # Check for Auth Header in Response
             if 'Authorization' in r_handshake.headers:
                 auth_token = r_handshake.headers['Authorization']
-                if debug_mode: logs.append(f"✅ Step 2.5 Handshake OK. Token found: {auth_token[:10]}...")
+                headers["Authorization"] = auth_token
+                if debug_mode: logs.append(f"✅ Step 2.5 Handshake OK. Token found.")
             else:
-                if debug_mode: logs.append(f"⚠️ Step 2.5 Warning: No Auth header in handshake (Status: {r_handshake.status_code})")
+                if debug_mode: logs.append(f"⚠️ Step 2.5 Warning: No Auth header (Status: {r_handshake.status_code})")
         except Exception as e:
             if debug_mode: logs.append(f"⚠️ Step 2.5 Failed: {str(e)}")
 
-        # STEP 3: API CALL
+        # STEP 3: GET FILES
         api_base = "https://sanfrancisco.form.us.empro.verintcloudservices.com/api/custom"
         headers["Content-Type"] = "application/json"
-        
-        # Inject the token if we found it
-        if auth_token: headers["Authorization"] = auth_token
         
         details_payload = {
             "caseid": str(case_id),
@@ -210,16 +205,27 @@ def fetch_verint_image(wrapper_url, case_id, debug_mode=False):
         )
         
         if r_list.status_code != 200:
-            if debug_mode: logs.append(f"❌ Step 3 Failed: {r_list.status_code}")
+            if debug_mode: logs.append(f"❌ Step 3 Failed: API returned {r_list.status_code}")
             return None, logs
         
         files_data = r_list.json()
+        
+        # --- DEBUG: DUMP JSON IF FAILED ---
         filename_str = ""
         if 'data' in files_data and 'formdata_filenames' in files_data['data']:
             filename_str = files_data['data']['formdata_filenames']
             
         if not filename_str:
-            if debug_mode: logs.append("❌ Step 3 Failed: No filenames")
+            # TRY FALLBACK (Maybe it is in 'files' list?)
+            if 'files' in files_data:
+                 if debug_mode: logs.append(f"⚠️ Found 'files' list instead of string. Trying to parse.")
+                 # (Placeholder for list parsing logic if needed)
+            
+            # DUMP THE JSON so we can see what IS there
+            json_dump = str(files_data)
+            # Truncate for display safety
+            if len(json_dump) > 300: json_dump = json_dump[:300] + "..."
+            if debug_mode: logs.append(f"❌ Step 3 Failed: No filenames. JSON: {json_dump}")
             return None, logs
             
         raw_files = filename_str.split(';')
@@ -269,14 +275,17 @@ def get_image_content(media_item, case_id, debug_flag=False):
     if not url: return None, False, []
     clean_url = url.split('?')[0].lower()
     
+    # 1. Standard Images
     if clean_url.endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp')):
         return url, "url", []
     
+    # 2. Verint Logic
     if "caseid" in url.lower():
         image_bytes, debug_logs = fetch_verint_image(url, case_id, debug_flag)
         if image_bytes: return image_bytes, "bytes", debug_logs
         return url, "broken", debug_logs
 
+    # 3. Fallback
     return url, "url", []
 
 # 8. Feed
