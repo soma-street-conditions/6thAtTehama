@@ -49,8 +49,9 @@ sites = [
         "name": "Hotel Isabel",
         "short_name": "Isabel",
         "address": "1095 Mission Street",
-        "lat": 37.779223991574554,
-        "lon": -122.41056224966958
+        # UPDATED COORDINATES
+        "lat": 37.779230374811554,
+        "lon": -122.4107826194545
     }
 ]
 
