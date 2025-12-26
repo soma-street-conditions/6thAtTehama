@@ -92,7 +92,7 @@ params = {
 def get_min_distance_to_any_site(row_lat, row_lon):
     """Returns the distance (in meters) to the closest of the 3 sites."""
     min_dist = float('inf')
-    R = 6371000 
+    R = 6371000  # Earth radius in meters
     
     for site in sites:
         lat1, lon1 = math.radians(site['lat']), math.radians(site['lon'])
@@ -207,60 +207,104 @@ with st.expander("🗺️ View Map & Incident Clusters", expanded=True):
 
 st.markdown("---")
 
-# 7. Helper: VERINT IMAGE CRACKER
-# This caches the image bytes so we don't re-download on every interaction
+# 7. Helper: VERINT IMAGE CRACKER (Final Logic)
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_verint_image(wrapper_url, case_id):
-    """
-    1. Visits the wrapper page.
-    2. Regex searches for the hidden 'formref' and 'filename'.
-    3. POSTs to the API to get the raw image.
-    """
     try:
-        # Step 1: Get the wrapper page HTML
+        # Standard Headers
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer": "https://mobile311.sfgov.org/",
+        }
         session = requests.Session()
-        r_page = session.get(wrapper_url, timeout=5)
-        if r_page.status_code != 200:
-            return None
-            
+
+        # STEP 1: Get Page HTML
+        r_page = session.get(wrapper_url, headers=headers, timeout=5)
+        if r_page.status_code != 200: return None
         html = r_page.text
-        
-        # Step 2: Hunt for the variables using Regex
-        # We look for: formref: "XYZ" and filename: "ABC.jpg"
-        formref_match = re.search(r'formref:\s*"([^"]+)"', html)
-        filename_match = re.search(r'filename:\s*"([^"]+)"', html)
-        
-        if not formref_match or not filename_match:
-            return None
-            
+
+        # STEP 2: Extract Secrets
+        # Get formref
+        formref_match = re.search(r'"formref"\s*:\s*"([^"]+)"', html)
+        if not formref_match: return None
         formref = formref_match.group(1)
-        filename = filename_match.group(1)
         
-        # Step 3: Construct the API Payload
-        api_url = "https://sanfrancisco.form.us.empro.verintcloudservices.com/api/custom?action=download_attachment&actionedby=&loadform=true&access=citizen&locale=en"
+        # Get CSRF Token
+        csrf_match = re.search(r'name="_csrf_token"\s+content="([^"]+)"', html)
+        csrf_token = csrf_match.group(1) if csrf_match else None
+
+        # STEP 3: Get Filename String
+        api_base = "https://sanfrancisco.form.us.empro.verintcloudservices.com/api/custom"
         
-        payload = {
+        headers["Referer"] = wrapper_url
+        headers["Origin"] = "https://sanfrancisco.form.us.empro.verintcloudservices.com"
+        headers["Content-Type"] = "application/json"
+        
+        if csrf_token:
+            headers["X-CSRF-TOKEN"] = csrf_token
+        
+        details_payload = {
+            "caseid": str(case_id),
+            "data": {"formref": formref},
+            "name": "download_attachments"
+        }
+
+        r_list = session.post(
+            f"{api_base}?action=get_attachments_details&actionedby=&loadform=true&access=citizen&locale=en",
+            json=details_payload, 
+            headers=headers,
+            timeout=5
+        )
+        
+        if r_list.status_code != 200: return None
+        
+        # CRITICAL UPDATE: Handle "formdata_filenames" string
+        files_data = r_list.json()
+        filename_str = ""
+        
+        if 'data' in files_data and 'formdata_filenames' in files_data['data']:
+            filename_str = files_data['data']['formdata_filenames']
+            
+        if not filename_str: return None
+        
+        # Split "file1.jpg;file2.jpg;" into list
+        raw_files = filename_str.split(';')
+
+        # STEP 4: Select Valid Image
+        target_filename = None
+        for fname in raw_files:
+            fname = fname.strip()
+            if not fname: continue
+            
+            # Ignore maps (*m.jpg) and look for images
+            if not fname.lower().endswith('m.jpg') and fname.lower().endswith(('.jpg', '.jpeg', '.png')):
+                target_filename = fname
+                break
+        
+        if not target_filename: return None
+
+        # STEP 5: Download
+        download_payload = {
             "caseid": str(case_id),
             "data": {
                 "formref": formref,
-                "filename": filename
+                "filename": target_filename
             },
-            "email": "",
-            "name": "download_attachments",
-            "xref": "",
-            "xref1": "",
-            "xref2": ""
+            "name": "download_attachments"
         }
-        
-        # Step 4: Fire the POST request
-        r_image = session.post(api_url, json=payload, timeout=5)
+
+        r_image = session.post(
+            f"{api_base}?action=download_attachment&actionedby=&loadform=true&access=citizen&locale=en",
+            json=download_payload, 
+            headers=headers,
+            timeout=5
+        )
         
         if r_image.status_code == 200:
-            return r_image.content # Return raw bytes
+            return r_image.content
             
-    except Exception as e:
+    except Exception:
         return None
-        
     return None
 
 def get_image_content(media_item, case_id):
@@ -276,8 +320,7 @@ def get_image_content(media_item, case_id):
         return url, "url"
     
     # Case B: Verint Wrapper -> Try to fetch bytes
-    # We only try this if it looks like a Verint wrapper (usually has caseid param)
-    if "caseid" in url.lower():
+    if "caseid" in clean_url:
         image_bytes = fetch_verint_image(url, case_id)
         if image_bytes:
             return image_bytes, "bytes"
