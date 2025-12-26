@@ -3,7 +3,6 @@ import pandas as pd
 import requests
 import pydeck as pdk
 import math
-from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 
 # 1. Page Config
@@ -56,12 +55,12 @@ sites = [
 ]
 
 # 4. Header & Executive Text
-st.title("TODCO Properties: Public Safety Impact Report")
+st.title("SOMA Public Safety Monitor")
 
 st.markdown("""
-**Operator:** TODCO Group
+**Subject Properties Managed By:** TODCO Group
 
-This dashboard monitors the immediate vicinity of three key TODCO-managed properties in SOMA. It aggregates real-time 311 service requests filed within **160 feet** of each building's entrance to identify persistent patterns of disorder, including open-air drug activity, violence, and unsafe street conditions.
+This independent dashboard monitors the immediate vicinity of three key properties in SOMA. It aggregates real-time 311 service requests filed within **160 feet** of each building's entrance to identify persistent patterns of disorder, including open-air drug activity, violence, and unsafe street conditions.
 
 **Monitored Locations:**
 """)
@@ -209,28 +208,7 @@ with st.expander("🗺️ View Map & Incident Clusters", expanded=True):
 
 st.markdown("---")
 
-# 7. Helper: Identify Image vs Portal Link vs Scraper
-# NEW: Cache this heavily so we don't spam the server on re-runs
-@st.cache_data(show_spinner=False, ttl=3600) 
-def try_scrape_image_url(page_url):
-    """Attempts to find a meta og:image tag in the wrapper page."""
-    try:
-        # Timeout quickly if it hangs
-        r = requests.get(page_url, timeout=3)
-        if r.status_code == 200:
-            soup = BeautifulSoup(r.text, 'html.parser')
-            # Look for OpenGraph image tag
-            og_image = soup.find("meta", property="og:image")
-            if og_image and og_image.get("content"):
-                return og_image["content"]
-            
-            # Fallback: Look for direct image ID input (rare but possible in some Verint versions)
-            # This is where we might add more logic later based on Carson's reply
-            
-    except:
-        pass
-    return None
-
+# 7. Helper: Identify Image vs Portal Link
 def get_image_info(media_item):
     if not media_item: return None, False
     url = media_item.get('url') if isinstance(media_item, dict) else media_item
@@ -242,13 +220,7 @@ def get_image_info(media_item):
     if clean_url.endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp')):
         return url, True 
     
-    # Case B: The "Web" wrapper
-    # Try to scrape it ONE time. If it fails, return the portal link.
-    scraped_url = try_scrape_image_url(url)
-    if scraped_url:
-        return scraped_url, True
-
-    # Case C: Fallback to link
+    # Case B: Portal Link (Fallback)
     return url, False 
 
 # 8. Display Feed
