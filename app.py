@@ -80,9 +80,9 @@ location_clauses = [
 ]
 location_filter = f"({' OR '.join(location_clauses)})"
 
-# UPDATE: Added 'AND service_subtype != 'garbage_and_debris'' to the filter
+# UPDATE: Added 'AND service_subtype != 'not_offensive''
 params = {
-    "$where": f"{location_filter} AND requested_datetime > '{five_months_ago}' AND media_url IS NOT NULL AND service_name != 'Tree Maintenance' AND service_subtype != 'garbage_and_debris'",
+    "$where": f"{location_filter} AND requested_datetime > '{five_months_ago}' AND media_url IS NOT NULL AND service_name != 'Tree Maintenance' AND service_subtype != 'garbage_and_debris' AND service_subtype != 'not_offensive'",
     "$order": "requested_datetime DESC",
     "$limit": st.session_state.limit
 }
@@ -144,7 +144,6 @@ with st.expander("🗺️ View Map & Incident Clusters", expanded=True):
     avg_lon = sum(s['lon'] for s in sites) / len(sites)
 
     # Layer 1: The Target Radii (Red Circles for ALL sites)
-    # We create a dataframe from the 'sites' list
     sites_df = pd.DataFrame(sites)
     
     layer_circles = pdk.Layer(
@@ -175,8 +174,7 @@ with st.expander("🗺️ View Map & Incident Clusters", expanded=True):
     else:
         layers = [layer_circles]
 
-    # Map View State
-    # UPDATE: Increased zoom from 15.5 -> 16.3 for a tighter view
+    # Map View State (Zoomed 16.3)
     view_state = pdk.ViewState(
         latitude=avg_lat,
         longitude=avg_lon,
@@ -232,6 +230,7 @@ if not df.empty:
                         </div>
                         """, unsafe_allow_html=True)
                     
+                    # Metadata
                     if 'requested_datetime' in row:
                         date_str = pd.to_datetime(row['requested_datetime']).strftime('%b %d, %I:%M %p')
                     else:
@@ -243,8 +242,16 @@ if not df.empty:
                     address = row.get('address', 'Location N/A')
                     map_url = f"https://www.google.com/maps/search/?api=1&query={address.replace(' ', '+')}"
                     
+                    # Clickable Ticket Link
+                    ticket_id = row.get('service_request_id', '')
+                    if ticket_id:
+                        ticket_url = f"https://mobile311.sfgov.org/tickets/{ticket_id}"
+                        date_display = f"[{date_str}]({ticket_url})"
+                    else:
+                        date_display = date_str
+
                     st.markdown(f"**{display_title}**")
-                    st.markdown(f"{date_str} | [{address}]({map_url})")
+                    st.markdown(f"{date_display} | [{address}]({map_url})")
             
             display_count += 1
             
