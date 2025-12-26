@@ -329,4 +329,37 @@ if not df.empty:
                     display_title = raw_subtype.replace('_', ' ').title()
                     
                     address = row.get('address', 'Location N/A')
-                    map_url = f"http://googleusercontent.com/maps.
+                    map_url = f"https://www.google.com/maps/search/?api=1&query={address.replace(' ', '+')}"
+                    
+                    # Ticket Link
+                    if case_id:
+                        ticket_url = f"https://mobile311.sfgov.org/tickets/{case_id}"
+                        date_display = f"[{date_str}]({ticket_url})"
+                    else:
+                        date_display = date_str
+
+                    # Closest Property Logic
+                    site_name = get_closest_site_name(float(row['lat']), float(row['long']))
+                    
+                    st.markdown(f"**{display_title}**")
+                    st.markdown(f"{date_display} | [{address}]({map_url}) | **Near {site_name}**")
+            
+            display_count += 1
+            
+    if display_count == 0:
+        st.info("No records found with media evidence.")
+    
+    # Load More Button
+    st.markdown("---")
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        if st.button(f"Load More Records (Current: {st.session_state.limit})"):
+            st.session_state.limit += 500
+            st.rerun()
+
+else:
+    st.info(f"No records found within 160ft of any monitored site in the last 5 months.")
+
+# Footer
+st.markdown("---")
+st.caption("Data source: [DataSF | Open Data Portal](https://data.sfgov.org/City-Infrastructure/311-Cases/vw6y-z8j6/about_data)")
