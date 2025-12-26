@@ -3,6 +3,7 @@ import pandas as pd
 import requests
 import pydeck as pdk
 import math
+from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 
 # 1. Page Config
@@ -192,7 +193,6 @@ with st.expander("🗺️ View Map & Incident Clusters", expanded=True):
     else:
         layers = [layer_circles]
 
-    # UPDATE: Increased zoom from 16.3 to 17.1
     view_state = pdk.ViewState(
         latitude=avg_lat,
         longitude=avg_lon,
@@ -209,15 +209,46 @@ with st.expander("🗺️ View Map & Incident Clusters", expanded=True):
 
 st.markdown("---")
 
-# 7. Helper: Identify Image vs Portal Link
+# 7. Helper: Identify Image vs Portal Link vs Scraper
+# NEW: Cache this heavily so we don't spam the server on re-runs
+@st.cache_data(show_spinner=False, ttl=3600) 
+def try_scrape_image_url(page_url):
+    """Attempts to find a meta og:image tag in the wrapper page."""
+    try:
+        # Timeout quickly if it hangs
+        r = requests.get(page_url, timeout=3)
+        if r.status_code == 200:
+            soup = BeautifulSoup(r.text, 'html.parser')
+            # Look for OpenGraph image tag
+            og_image = soup.find("meta", property="og:image")
+            if og_image and og_image.get("content"):
+                return og_image["content"]
+            
+            # Fallback: Look for direct image ID input (rare but possible in some Verint versions)
+            # This is where we might add more logic later based on Carson's reply
+            
+    except:
+        pass
+    return None
+
 def get_image_info(media_item):
     if not media_item: return None, False
     url = media_item.get('url') if isinstance(media_item, dict) else media_item
     if not url: return None, False
+    
     clean_url = url.split('?')[0].lower()
     
+    # Case A: Standard Image (Public Cloud)
     if clean_url.endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp')):
         return url, True 
+    
+    # Case B: The "Web" wrapper
+    # Try to scrape it ONE time. If it fails, return the portal link.
+    scraped_url = try_scrape_image_url(url)
+    if scraped_url:
+        return scraped_url, True
+
+    # Case C: Fallback to link
     return url, False 
 
 # 8. Display Feed
