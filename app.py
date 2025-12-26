@@ -38,7 +38,7 @@ sites = [
 ]
 
 # 4. Header
-st.title("SOMA Public Safety Monitor")
+st.title("SOMA Public Safety Monitor v2")
 st.markdown("""
 **Subject Properties Managed By:** TODCO Group
 This independent dashboard monitors the immediate vicinity of three key properties in SOMA.
@@ -99,4 +99,233 @@ def get_data(query_limit):
         r = requests.get(base_url, params=params)
         if r.status_code == 200:
             df_data = pd.DataFrame(r.json())
-            if not df_data.
+            if not df_data.empty and 'point' in df_data.columns:
+                if 'lat' in df_data.columns and 'long' in df_data.columns:
+                    df_data['lat'] = pd.to_numeric(df_data['lat'])
+                    df_data['lon'] = pd.to_numeric(df_data['long'])
+                    df_data['min_dist'] = df_data.apply(lambda x: get_min_distance_to_any_site(x['lat'], x['lon']), axis=1)
+                    df_data = df_data[df_data['min_dist'] <= radius_meters]
+            return df_data
+        else: return pd.DataFrame()
+    except: return pd.DataFrame()
+
+df = get_data(st.session_state.limit)
+
+# --- MAP SECTION ---
+with st.expander("🗺️ View Map & Incident Clusters", expanded=True):
+    avg_lat = sum(s['lat'] for s in sites) / len(sites)
+    avg_lon = sum(s['lon'] for s in sites) / len(sites)
+    sites_df = pd.DataFrame(sites)
+    
+    layer_circles = pdk.Layer(
+        "ScatterplotLayer", sites_df, get_position='[lon, lat]',
+        get_color=[255, 0, 0, 50], get_radius=radius_meters,
+        stroked=True, get_line_color=[255, 0, 0, 200], get_line_width=2
+    )
+
+    if not df.empty and 'lat' in df.columns:
+        layer_points = pdk.Layer(
+            "ScatterplotLayer", df, get_position='[lon, lat]',
+            get_color=[0, 128, 255, 200], get_radius=3, pickable=True
+        )
+        layers = [layer_circles, layer_points]
+    else: layers = [layer_circles]
+
+    st.pydeck_chart(pdk.Deck(
+        map_style=pdk.map_styles.CARTO_LIGHT,
+        initial_view_state=pdk.ViewState(latitude=avg_lat, longitude=avg_lon, zoom=16.65),
+        layers=layers, tooltip={"text": "{service_subtype}\n{requested_datetime}"}
+    ))
+
+st.markdown("---")
+
+# 7. Helper: VERINT IMAGE CRACKER (Fixed Logic)
+def fetch_verint_image(wrapper_url, case_id, debug_mode=False):
+    logs = [] 
+    try:
+        session = requests.Session()
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer": "https://mobile311.sfgov.org/",
+        }
+
+        # STEP 1
+        r_page = session.get(wrapper_url, headers=headers, timeout=5)
+        if r_page.status_code != 200:
+            if debug_mode: logs.append(f"❌ Step 1 Failed: {r_page.status_code}")
+            return None, logs
+        
+        final_referer = r_page.url 
+        html = r_page.text
+        if debug_mode: logs.append("✅ Step 1 OK")
+
+        # STEP 2
+        formref_match = re.search(r'"formref"\s*:\s*"([^"]+)"', html)
+        if not formref_match:
+            if debug_mode: logs.append("❌ Step 2 Failed: No formref")
+            return None, logs
+        formref = formref_match.group(1)
+        
+        csrf_match = re.search(r'name="_csrf_token"\s+content="([^"]+)"', html)
+        csrf_token = csrf_match.group(1) if csrf_match else None
+        
+        if debug_mode: logs.append(f"✅ Step 2 OK (CSRF found: {bool(csrf_token)})")
+
+        # STEP 3
+        api_base = "https://sanfrancisco.form.us.empro.verintcloudservices.com/api/custom"
+        headers["Referer"] = final_referer
+        headers["Origin"] = "https://sanfrancisco.form.us.empro.verintcloudservices.com"
+        headers["Content-Type"] = "application/json"
+        if csrf_token: headers["X-CSRF-TOKEN"] = csrf_token
+        
+        details_payload = {
+            "caseid": str(case_id),
+            "data": {"formref": formref},
+            "name": "download_attachments",
+            "email": "", "xref": "", "xref1": "", "xref2": ""
+        }
+
+        r_list = session.post(
+            f"{api_base}?action=get_attachments_details&actionedby=&loadform=true&access=citizen&locale=en",
+            json=details_payload, headers=headers, timeout=5
+        )
+        
+        if r_list.status_code != 200:
+            if debug_mode: logs.append(f"❌ Step 3 Failed: {r_list.status_code}")
+            return None, logs
+        
+        files_data = r_list.json()
+        filename_str = ""
+        if 'data' in files_data and 'formdata_filenames' in files_data['data']:
+            filename_str = files_data['data']['formdata_filenames']
+            
+        if not filename_str:
+            if debug_mode: logs.append("❌ Step 3 Failed: No filenames")
+            return None, logs
+            
+        raw_files = filename_str.split(';')
+        if debug_mode: logs.append(f"✅ Step 3 OK: {len(raw_files)} files")
+
+        # STEP 4
+        target_filename = None
+        for fname in raw_files:
+            fname = fname.strip()
+            if not fname: continue
+            if not fname.lower().endswith('m.jpg') and fname.lower().endswith(('.jpg', '.jpeg', '.png')):
+                target_filename = fname
+                break
+        
+        if not target_filename: 
+             if debug_mode: logs.append("❌ Step 4 Failed: No valid image")
+             return None, logs
+
+        # STEP 5
+        download_payload = {
+            "caseid": str(case_id),
+            "data": {"formref": formref, "filename": target_filename},
+            "name": "download_attachments",
+            "email": "", "xref": "", "xref1": "", "xref2": ""
+        }
+
+        r_image = session.post(
+            f"{api_base}?action=download_attachment&actionedby=&loadform=true&access=citizen&locale=en",
+            json=download_payload, headers=headers, timeout=5
+        )
+        
+        if r_image.status_code == 200:
+            if debug_mode: logs.append(f"✅ Step 5 OK: {len(r_image.content)} bytes")
+            return r_image.content, logs
+        else:
+             if debug_mode: logs.append(f"❌ Step 5 Failed: {r_image.status_code}")
+             return None, logs
+            
+    except Exception as e:
+        if debug_mode: logs.append(f"❌ Exception: {str(e)}")
+        return None, logs
+    return None, logs
+
+def get_image_content(media_item, case_id, debug_flag=False):
+    if not media_item: return None, False, []
+    url = media_item.get('url') if isinstance(media_item, dict) else media_item
+    if not url: return None, False, []
+    
+    clean_url = url.split('?')[0].lower()
+    
+    # 1. Standard Images (already correct)
+    if clean_url.endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp')):
+        return url, "url", []
+    
+    # 2. Verint Logic (FIXED: Check FULL URL for caseid)
+    if "caseid" in url.lower():
+        image_bytes, debug_logs = fetch_verint_image(url, case_id, debug_flag)
+        if image_bytes: return image_bytes, "bytes", debug_logs
+        return url, "broken", debug_logs
+
+    # 3. Fallback
+    return url, "url", []
+
+# 8. Feed
+if not df.empty:
+    cols = st.columns(4)
+    display_count = 0
+    
+    for index, row in df.iterrows():
+        notes = str(row.get('status_notes', '')).lower()
+        if 'duplicate' in notes: continue
+
+        # SHOW DEBUG LOGS FOR FIRST 3
+        show_debug = (display_count < 3)
+        
+        case_id = row.get('service_request_id', '')
+        media_content, media_type, logs = get_image_content(row.get('media_url'), case_id, debug_flag=show_debug)
+        
+        if media_content:
+            col_index = display_count % 4
+            with cols[col_index]:
+                with st.container(border=True):
+                    
+                    # LOGS (Printed if debug is on AND failed, or successful)
+                    if show_debug and logs:
+                        if media_type == "broken":
+                            st.error("\n".join(logs))
+                        else:
+                            st.success("\n".join(logs))
+                    
+                    if media_type == "url" or media_type == "bytes":
+                        st.image(media_content, width="stretch")
+                    else:
+                        st.image(media_content, width="stretch")
+
+                    if 'requested_datetime' in row:
+                        date_str = pd.to_datetime(row['requested_datetime']).strftime('%b %d, %I:%M %p')
+                    else: date_str = "?"
+                    
+                    raw_subtype = row.get('service_subtype', 'Unknown Issue')
+                    display_title = raw_subtype.replace('_', ' ').title()
+                    address = row.get('address', 'Location N/A')
+                    map_url = f"https://www.google.com/maps/search/?api=1&query={address.replace(' ', '+')}"
+                    
+                    if case_id:
+                        ticket_url = f"https://mobile311.sfgov.org/tickets/{case_id}"
+                        date_display = f"[{date_str}]({ticket_url})"
+                    else: date_display = date_str
+
+                    site_name = get_closest_site_name(float(row['lat']), float(row['long']))
+                    st.markdown(f"**{display_title}**")
+                    st.markdown(f"{date_display} | [{address}]({map_url}) | **Near {site_name}**")
+            
+            display_count += 1
+            
+    if display_count == 0: st.info("No records found with media evidence.")
+    
+    st.markdown("---")
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        if st.button(f"Load More Records (Current: {st.session_state.limit})"):
+            st.session_state.limit += 500
+            st.rerun()
+
+else: st.info(f"No records found within 160ft of any monitored site in the last 5 months.")
+
+st.markdown("---")
+st.caption("Data source: [DataSF | Open Data Portal](https://data.sfgov.org/City-Infrastructure/311-Cases/vw6y-z8j6/about_data)")
