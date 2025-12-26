@@ -33,18 +33,21 @@ radius_meters = 48.8  # ~160 feet
 sites = [
     {
         "name": "Knox SRO",
+        "short_name": "Knox",
         "address": "241 6th Street",
         "lat": 37.77947681979851,
         "lon": -122.40646722115551
     },
     {
         "name": "Bayanihan House",
+        "short_name": "Bayanihan",
         "address": "88 6th Street",
         "lat": 37.78092868326207,
         "lon": -122.40917338372577
     },
     {
         "name": "Hotel Isabel",
+        "short_name": "Isabel",
         "address": "1095 Mission Street",
         "lat": 37.779223991574554,
         "lon": -122.41056224966958
@@ -73,14 +76,12 @@ st.markdown("Download the **Solve SF** app to submit reports: [iOS](https://apps
 st.markdown("---")
 
 # 5. Dynamic Query Construction
-# Build a query that checks: (Circle 1 OR Circle 2 OR Circle 3)
 location_clauses = [
     f"within_circle(point, {s['lat']}, {s['lon']}, {radius_meters})" 
     for s in sites
 ]
 location_filter = f"({' OR '.join(location_clauses)})"
 
-# UPDATE: Added 'AND service_subtype != 'not_offensive''
 params = {
     "$where": f"{location_filter} AND requested_datetime > '{five_months_ago}' AND media_url IS NOT NULL AND service_name != 'Tree Maintenance' AND service_subtype != 'garbage_and_debris' AND service_subtype != 'not_offensive'",
     "$order": "requested_datetime DESC",
@@ -108,6 +109,27 @@ def get_min_distance_to_any_site(row_lat, row_lon):
             
     return min_dist
 
+def get_closest_site_name(row_lat, row_lon):
+    """Returns the short name of the closest site."""
+    min_dist = float('inf')
+    closest_name = ""
+    R = 6371000 
+    
+    for site in sites:
+        lat1, lon1 = math.radians(site['lat']), math.radians(site['lon'])
+        lat2, lon2 = math.radians(row_lat), math.radians(row_lon)
+        dphi = lat2 - lat1
+        dlambda = lon2 - lon1
+        a = math.sin(dphi/2)**2 + math.cos(lat1)*math.cos(lat2)*math.sin(dlambda/2)**2
+        c = 2*math.atan2(math.sqrt(a), math.sqrt(1-a))
+        dist = R*c
+        
+        if dist < min_dist:
+            min_dist = dist
+            closest_name = site['short_name']
+            
+    return closest_name
+
 # 6. Fetch Data
 @st.cache_data(ttl=300)
 def get_data(query_limit):
@@ -123,7 +145,6 @@ def get_data(query_limit):
                     df_data['lon'] = pd.to_numeric(df_data['long'])
                     
                     # --- STRICT PYTHON FILTER ---
-                    # Keep row if it is within radius of ANY of the 3 sites
                     df_data['min_dist'] = df_data.apply(
                         lambda x: get_min_distance_to_any_site(x['lat'], x['lon']), axis=1
                     )
@@ -139,28 +160,25 @@ df = get_data(st.session_state.limit)
 
 # --- MAP SECTION ---
 with st.expander("🗺️ View Map & Incident Clusters", expanded=True):
-    # Calculate the center of the map (average of all sites)
     avg_lat = sum(s['lat'] for s in sites) / len(sites)
     avg_lon = sum(s['lon'] for s in sites) / len(sites)
 
-    # Layer 1: The Target Radii (Red Circles for ALL sites)
     sites_df = pd.DataFrame(sites)
     
     layer_circles = pdk.Layer(
         "ScatterplotLayer",
         sites_df,
         get_position='[lon, lat]',
-        get_color=[255, 0, 0, 50],     # Faint Red Fill
-        get_radius=radius_meters,      # 160ft
+        get_color=[255, 0, 0, 50],
+        get_radius=radius_meters,
         stroked=True,
-        get_line_color=[255, 0, 0, 200], # Solid Red Outline
+        get_line_color=[255, 0, 0, 200],
         get_line_width=2,
         radius_scale=1,
         radius_min_pixels=1,
         radius_max_pixels=1000,
     )
 
-    # Layer 2: The Reports (Blue Dots)
     if not df.empty and 'lat' in df.columns:
         layer_points = pdk.Layer(
             "ScatterplotLayer",
@@ -174,7 +192,6 @@ with st.expander("🗺️ View Map & Incident Clusters", expanded=True):
     else:
         layers = [layer_circles]
 
-    # Map View State (Zoomed 16.3)
     view_state = pdk.ViewState(
         latitude=avg_lat,
         longitude=avg_lon,
@@ -242,7 +259,7 @@ if not df.empty:
                     address = row.get('address', 'Location N/A')
                     map_url = f"https://www.google.com/maps/search/?api=1&query={address.replace(' ', '+')}"
                     
-                    # Clickable Ticket Link
+                    # Ticket Link
                     ticket_id = row.get('service_request_id', '')
                     if ticket_id:
                         ticket_url = f"https://mobile311.sfgov.org/tickets/{ticket_id}"
@@ -250,8 +267,11 @@ if not df.empty:
                     else:
                         date_display = date_str
 
+                    # Closest Property Logic
+                    site_name = get_closest_site_name(float(row['lat']), float(row['long']))
+                    
                     st.markdown(f"**{display_title}**")
-                    st.markdown(f"{date_display} | [{address}]({map_url})")
+                    st.markdown(f"{date_display} | [{address}]({map_url}) | **Near {site_name}**")
             
             display_count += 1
             
