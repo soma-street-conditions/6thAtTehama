@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from urllib.parse import urlparse, parse_qs
 
 # 1. Page Config
-st.set_page_config(page_title="TODCO Safety Monitor v1", page_icon="🚨", layout="wide")
+st.set_page_config(page_title="TODCO Safety Monitor", page_icon="🚨", layout="wide")
 
 # --- STYLING ---
 st.markdown("""
@@ -140,7 +140,7 @@ with st.expander("🗺️ View Map & Incident Clusters", expanded=True):
 
 st.markdown("---")
 
-# 7. Helper: VERINT IMAGE CRACKER (ID Sync Fix)
+# 7. Helper: VERINT IMAGE CRACKER (URL KEY FIX)
 def fetch_verint_image(wrapper_url, debug_mode=False):
     logs = [] 
     try:
@@ -150,45 +150,52 @@ def fetch_verint_image(wrapper_url, debug_mode=False):
             "Referer": "https://mobile311.sfgov.org/",
         }
 
-        # EXTRACT CASE ID DIRECTLY FROM URL (Crucial Fix)
-        # We ignore the passed ID and trust the URL
-        parsed = urlparse(wrapper_url)
-        qs = parse_qs(parsed.query)
-        url_case_id = qs.get('caseid', [None])[0]
-        
-        if not url_case_id:
-             if debug_mode: logs.append("❌ Step 0 Failed: Could not find caseid in URL")
-             return None, logs
-
-        if debug_mode: logs.append(f"ℹ️ Target Case ID (from URL): {url_case_id}")
-
-        # STEP 1: VISIT PAGE (Start Session)
+        # STEP 1: VISIT PAGE TO GET FINAL URL & COOKIES
         r_page = session.get(wrapper_url, headers=headers, timeout=5)
         if r_page.status_code != 200:
             if debug_mode: logs.append(f"❌ Step 1 Failed: {r_page.status_code}")
             return None, logs
         
-        final_referer = r_page.url 
+        final_url = r_page.url 
         html = r_page.text
         if debug_mode: logs.append("✅ Step 1 OK")
 
-        # STEP 2: EXTRACT SECRETS
-        formref_match = re.search(r'"formref"\s*:\s*"([^"]+)"', html)
-        if not formref_match:
-            if debug_mode: logs.append("❌ Step 2 Failed: No formref")
-            return None, logs
-        formref = formref_match.group(1)
+        # STEP 2: EXTRACT SECRETS (PRIORITIZE URL!)
+        parsed_url = urlparse(final_url)
+        qs = parse_qs(parsed_url.query)
         
+        # A. Extract formref from URL (The "Golden Key")
+        url_formref = qs.get('formref', [None])[0]
+        
+        if url_formref:
+             formref = url_formref
+             if debug_mode: logs.append(f"✅ Step 2: Found 'formref' in URL: {formref}")
+        else:
+             # Fallback to HTML scraping (less reliable)
+             formref_match = re.search(r'"formref"\s*:\s*"([^"]+)"', html)
+             if not formref_match:
+                 if debug_mode: logs.append("❌ Step 2 Failed: No formref found")
+                 return None, logs
+             formref = formref_match.group(1)
+             if debug_mode: logs.append(f"⚠️ Step 2: Fallback to HTML formref: {formref}")
+
+        # B. Extract Case ID from URL (to ensure match)
+        url_case_id = qs.get('caseid', [None])[0]
+        if not url_case_id:
+             if debug_mode: logs.append("❌ Step 2 Failed: No caseid in URL")
+             return None, logs
+
+        # C. Extract CSRF (HTML only)
         csrf_match = re.search(r'name="_csrf_token"\s+content="([^"]+)"', html)
         csrf_token = csrf_match.group(1) if csrf_match else None
         
-        if debug_mode: logs.append(f"✅ Step 2 OK (CSRF: {bool(csrf_token)})")
+        if debug_mode: logs.append(f"✅ Step 2 Secrets: CSRF Found: {bool(csrf_token)}")
 
-        # STEP 2.5: HANDSHAKE (Get Token)
+        # STEP 2.5: HANDSHAKE
         auth_token = None
         try:
             citizen_url = "https://sanfrancisco.form.us.empro.verintcloudservices.com/api/citizen?archived=Y&preview=false&locale=en"
-            headers["Referer"] = final_referer
+            headers["Referer"] = final_url
             headers["Origin"] = "https://sanfrancisco.form.us.empro.verintcloudservices.com"
             if csrf_token: headers["X-CSRF-TOKEN"] = csrf_token
             
@@ -196,19 +203,19 @@ def fetch_verint_image(wrapper_url, debug_mode=False):
             if 'Authorization' in r_handshake.headers:
                 auth_token = r_handshake.headers['Authorization']
                 headers["Authorization"] = auth_token
-                if debug_mode: logs.append(f"✅ Step 2.5 Handshake OK.")
+                if debug_mode: logs.append(f"✅ Step 2.5 Handshake OK")
             else:
                 if debug_mode: logs.append(f"⚠️ Step 2.5 Warning: No Auth header")
         except Exception as e:
             if debug_mode: logs.append(f"⚠️ Step 2.5 Failed: {str(e)}")
 
-        # STEP 3: GET FILES (Using URL Case ID)
+        # STEP 3: GET FILES
         api_base = "https://sanfrancisco.form.us.empro.verintcloudservices.com/api/custom"
         headers["Content-Type"] = "application/json"
         
         details_payload = {
-            "caseid": str(url_case_id), # USING URL ID
-            "data": {"formref": formref},
+            "caseid": str(url_case_id), 
+            "data": {"formref": formref}, # Using URL formref!
             "name": "download_attachments",
             "email": "", "xref": "", "xref1": "", "xref2": ""
         }
@@ -249,7 +256,7 @@ def fetch_verint_image(wrapper_url, debug_mode=False):
 
         # STEP 5: DOWNLOAD
         download_payload = {
-            "caseid": str(url_case_id), # USING URL ID
+            "caseid": str(url_case_id),
             "data": {"formref": formref, "filename": target_filename},
             "name": "download_attachments",
             "email": "", "xref": "", "xref1": "", "xref2": ""
@@ -284,7 +291,6 @@ def get_image_content(media_item, case_id, debug_flag=False):
     
     # 2. Verint Logic
     if "caseid" in url.lower():
-        # NOTE: We ignore the 'case_id' argument here and let the function parse the URL
         image_bytes, debug_logs = fetch_verint_image(url, debug_flag)
         if image_bytes: return image_bytes, "bytes", debug_logs
         return url, "broken", debug_logs
