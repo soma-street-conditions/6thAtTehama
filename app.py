@@ -348,10 +348,11 @@ if not df.empty:
                 with st.container(border=True):
                     
                     # RENDER IMAGE OR BUTTON
+                    # FIXED: use_container_width -> width="stretch"
                     if media_type == "url":
-                        st.image(media_content, use_container_width=True)
+                        st.image(media_content, width="stretch")
                     elif media_type == "bytes":
-                        st.image(media_content, use_container_width=True)
+                        st.image(media_content, width="stretch")
                     else:
                         # Fallback Button
                         st.markdown(f"""
