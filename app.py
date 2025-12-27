@@ -46,7 +46,7 @@ st.title("SOMA Neighborhood Safety Monitor: TODCO Portfolio Watch")
 st.markdown("### Daily feed of public safety and sanitation incidents surrounding TODCO-managed properties.")
 
 st.markdown("""
-This automated dashboard aggregates live 311 service request data from the City of San Francisco to track environmental conditions at three key subsidized housing sites managed by the **Tenants and Owners Development Corporation (TODCO)**.
+This automated dashboard aggregates daily 311 service request data from the City of San Francisco to track environmental conditions at three key subsidized housing sites managed by the **Tenants and Owners Development Corporation (TODCO)**.
 
 The data visualizes the density of safety hazards, including biohazards, encampments, and blocked sidewalks, clustered immediately around these facilities. This tool serves as a transparency mechanism for neighbors, city officials, and regulators to monitor adherence to *"Good Neighbor Policies"* and HUD *"Decent, Safe, and Sanitary"* standards.
 """)
