@@ -16,7 +16,8 @@ st.markdown("""
     <style>
         div[data-testid="stVerticalBlock"] > div { gap: 0.2rem; }
         .stMarkdown p { font-size: 0.95rem; line-height: 1.5; margin-bottom: 10px; }
-        .stMarkdown h2 { padding-top: 1rem; }
+        .stMarkdown h1 { padding-bottom: 0rem; }
+        .stMarkdown h3 { font-weight: 400; font-size: 1.2rem; color: #444; padding-bottom: 1rem; }
         div.stButton > button { width: 100%; border-radius: 5px; }
         .site-card { background-color: #f8f9fa; padding: 10px; border-radius: 5px; margin-bottom: 10px; }
         img { border-radius: 5px; }
@@ -40,11 +41,14 @@ sites = [
     {"name": "Hotel Isabel", "short_name": "Isabel", "address": "1095 Mission Street", "lat": 37.779230374811554, "lon": -122.4107826194545}
 ]
 
-# 4. Header
-st.title("SOMA Public Safety Monitor")
+# 4. Header & Executive Text (UPDATED)
+st.title("SOMA Neighborhood Safety Monitor: TODCO Portfolio Watch")
+st.markdown("### Daily feed of public safety and sanitation incidents surrounding TODCO-managed properties.")
+
 st.markdown("""
-**Subject Properties Managed By:** TODCO Group
-This independent dashboard monitors the immediate vicinity of three key properties in SOMA.
+This automated dashboard aggregates live 311 service request data from the City of San Francisco to track environmental conditions at three key subsidized housing sites managed by the **Tenants and Owners Development Corporation (TODCO)**.
+
+The data visualizes the density of safety hazards, including biohazards, encampments, and blocked sidewalks, clustered immediately around these facilities. This tool serves as a transparency mechanism for neighbors, city officials, and regulators to monitor adherence to *"Good Neighbor Policies"* and HUD *"Decent, Safe, and Sanitary"* standards.
 """)
 
 c1, c2, c3 = st.columns(3)
@@ -57,8 +61,24 @@ st.markdown("---")
 # 5. Query Construction
 location_clauses = [f"within_circle(point, {s['lat']}, {s['lon']}, {radius_meters})" for s in sites]
 location_filter = f"({' OR '.join(location_clauses)})"
+
+# EXCLUSION LIST
+exclusions = [
+    "service_name != 'Tree Maintenance'",
+    "service_subtype != 'garbage_and_debris'",
+    "service_subtype != 'not_offensive'",
+    "service_subtype != 'Toters_left_out_24x7'",
+    "service_subtype != 'Other_including_abandoned_toter'",
+    "service_subtype != 'Other_Illegal_Parking'",
+    "service_subtype != 'Add_remove_garbage_can'",
+    "service_subtype != 'City_garbage_can_overflowing'",
+    "service_subtype != 'Pavement_Defect'",
+    "service_subtype != 'Sidewalk_Defect'"
+]
+exclusion_string = " AND ".join(exclusions)
+
 params = {
-    "$where": f"{location_filter} AND requested_datetime > '{five_months_ago}' AND media_url IS NOT NULL AND service_name != 'Tree Maintenance' AND service_subtype != 'garbage_and_debris' AND service_subtype != 'not_offensive'",
+    "$where": f"{location_filter} AND requested_datetime > '{five_months_ago}' AND media_url IS NOT NULL AND {exclusion_string}",
     "$order": "requested_datetime DESC",
     "$limit": st.session_state.limit
 }
